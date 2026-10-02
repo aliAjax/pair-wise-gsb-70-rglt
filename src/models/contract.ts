@@ -66,6 +66,10 @@ export interface ApiContract {
   status: ContractStatus;
   updatedAt: string;
   openapi: string;
+  /** 本契约调用的上游（被依赖）契约 ID，发布时上游必须先冻结 */
+  dependencies: string[];
+  /** 工作副本修订号，每次内容变化递增，用于跨标签页乐观并发 */
+  revision: number;
   changes: ContractChange[];
   consumers: ApiConsumer[];
   exemptions: Exemption[];

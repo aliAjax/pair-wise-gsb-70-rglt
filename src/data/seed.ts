@@ -123,6 +123,8 @@ export const seedContracts: ApiContract[] = [
     status: 'review',
     updatedAt: '2026-09-29T03:12:00.000Z',
     openapi: orderOpenApi,
+    dependencies: ['contract-payment', 'contract-user'],
+    revision: 0,
     changes: [
       change(
         'chg-order-1',
@@ -230,6 +232,8 @@ export const seedContracts: ApiContract[] = [
     status: 'ready',
     updatedAt: '2026-09-28T10:40:00.000Z',
     openapi: paymentOpenApi,
+    dependencies: ['contract-user'],
+    revision: 0,
     changes: [
       change(
         'chg-pay-1',
@@ -308,6 +312,8 @@ export const seedContracts: ApiContract[] = [
     status: 'review',
     updatedAt: '2026-09-27T06:15:00.000Z',
     openapi: userOpenApi,
+    dependencies: [],
+    revision: 0,
     changes: [
       change(
         'chg-user-1',

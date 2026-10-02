@@ -7,7 +7,7 @@ import type {
 } from '../models/contract';
 import { stableChecksum, formatDateTime } from '../lib/utils';
 
-const STORAGE_KEY = 'pair-wise-gsb-70-contracts';
+export const STORAGE_KEY = 'pair-wise-gsb-70-contracts';
 const LATENCY = 180;
 
 function clone<T>(value: T): T {
@@ -18,18 +18,36 @@ async function wait(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, LATENCY));
 }
 
-export async function listContracts(): Promise<ApiContract[]> {
-  await wait();
+/** 补齐旧版本本地数据缺少的字段，revision 用于跨标签页乐观并发 */
+function migrate(contract: ApiContract): ApiContract {
+  return {
+    ...contract,
+    dependencies: contract.dependencies ?? [],
+    revision: contract.revision ?? 0,
+  };
+}
+
+export function loadContracts(): ApiContract[] {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
     try {
-      return JSON.parse(stored) as ApiContract[];
+      return (JSON.parse(stored) as ApiContract[]).map(migrate);
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
   }
-  persistContracts(seedContracts);
-  return clone(seedContracts);
+  const seeded = seedContracts.map(migrate);
+  storeContracts(seeded);
+  return clone(seeded);
+}
+
+export function storeContracts(contracts: ApiContract[]): void {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(contracts));
+}
+
+export async function listContracts(): Promise<ApiContract[]> {
+  await wait();
+  return clone(loadContracts());
 }
 
 export async function getContract(id: string): Promise<ApiContract | undefined> {
@@ -38,13 +56,19 @@ export async function getContract(id: string): Promise<ApiContract | undefined> 
 }
 
 export async function saveContract(updated: ApiContract): Promise<ApiContract> {
-  const contracts = await listContracts();
-  const exists = contracts.some((contract) => contract.id === updated.id);
-  const saved = { ...updated, updatedAt: new Date().toISOString() };
+  const contracts = loadContracts();
+  const current = contracts.find((contract) => contract.id === updated.id);
+  const exists = Boolean(current);
+  const saved: ApiContract = {
+    ...updated,
+    dependencies: updated.dependencies ?? current?.dependencies ?? [],
+    revision: (current?.revision ?? 0) + (exists ? 1 : 0),
+    updatedAt: new Date().toISOString(),
+  };
   const next = exists
     ? contracts.map((contract) => (contract.id === updated.id ? saved : contract))
     : [saved, ...contracts];
-  persistContracts(next);
+  storeContracts(next);
   await wait();
   return clone(saved);
 }
@@ -56,7 +80,7 @@ export async function reviewChange(
   reviewer: string,
   comment: string,
 ): Promise<ApiContract> {
-  const contracts = await listContracts();
+  const contracts = loadContracts();
   const contract = contracts.find((item) => item.id === contractId);
   if (!contract) {
     throw new Error('契约不存在');
@@ -64,6 +88,7 @@ export async function reviewChange(
 
   const updated: ApiContract = {
     ...contract,
+    revision: contract.revision + 1,
     status: contract.status === 'draft' ? 'review' : contract.status,
     changes: contract.changes.map((change) =>
       change.id === changeId
@@ -77,7 +102,7 @@ export async function reviewChange(
         : change,
     ),
   };
-  persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
+  storeContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
   await wait();
   return clone(updated);
 }
@@ -88,10 +113,12 @@ export async function bulkReviewChanges(
   reviewer: string,
   comment: string,
 ): Promise<ApiContract[]> {
-  const contracts = await listContracts();
+  const contracts = loadContracts();
   const selected = new Set(selections.map((item) => `${item.contractId}:${item.changeId}`));
+  const touched = new Set(selections.map((item) => item.contractId));
   const updated = contracts.map((contract) => ({
     ...contract,
+    revision: touched.has(contract.id) ? contract.revision + 1 : contract.revision,
     status:
       selected.has(`${contract.id}:${contract.changes[0]?.id}`) && contract.status === 'draft'
         ? ('review' as const)
@@ -108,7 +135,7 @@ export async function bulkReviewChanges(
         : change,
     ),
   }));
-  persistContracts(updated);
+  storeContracts(updated);
   await wait();
   return clone(updated);
 }
@@ -117,13 +144,38 @@ export async function updateContractOpenApi(
   contractId: string,
   openapi: string,
 ): Promise<ApiContract> {
-  const contracts = await listContracts();
+  const contracts = loadContracts();
   const contract = contracts.find((item) => item.id === contractId);
   if (!contract) {
     throw new Error('契约不存在');
   }
-  const updated = { ...contract, openapi, updatedAt: new Date().toISOString() };
-  persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
+  const updated = {
+    ...contract,
+    openapi,
+    revision: contract.revision + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  storeContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
+  await wait();
+  return clone(updated);
+}
+
+export async function updateContractDependencies(
+  contractId: string,
+  dependencies: string[],
+): Promise<ApiContract> {
+  const contracts = loadContracts();
+  const contract = contracts.find((item) => item.id === contractId);
+  if (!contract) {
+    throw new Error('契约不存在');
+  }
+  const updated: ApiContract = {
+    ...contract,
+    dependencies: dependencies.filter((id) => id !== contractId),
+    revision: contract.revision + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  storeContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
   await wait();
   return clone(updated);
 }
@@ -133,7 +185,7 @@ export async function addExemption(
   changeId: string,
   reason: string,
 ): Promise<ApiContract> {
-  const contracts = await listContracts();
+  const contracts = loadContracts();
   const contract = contracts.find((item) => item.id === contractId);
   if (!contract) {
     throw new Error('契约不存在');
@@ -148,14 +200,48 @@ export async function addExemption(
   };
   const updated: ApiContract = {
     ...contract,
+    revision: contract.revision + 1,
     exemptions: [...contract.exemptions, exemption],
     changes: contract.changes.map((change) =>
       change.id === changeId ? { ...change, reviewState: 'exemption' } : change,
     ),
   };
-  persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
+  storeContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
   await wait();
   return clone(updated);
+}
+
+/**
+ * 冻结一份契约的正式版本快照。
+ * 快照（含完整 OpenAPI、变更清单与校验值）随契约一次性写入，
+ * 不会出现“版本只写了一半”的中间状态。
+ */
+export function buildFrozenContract(
+  contract: ApiContract,
+  version: string,
+  notes: string,
+  releasedAt: string,
+): { contract: ApiContract; release: ContractVersion } {
+  const release: ContractVersion = {
+    id: `ver-${Date.now()}-${contract.id.slice(-6)}`,
+    contractId: contract.id,
+    version,
+    releasedAt,
+    checksum: stableChecksum(contract.openapi),
+    notes,
+    changeIds: contract.changes.map((change) => change.id),
+    openapi: contract.openapi,
+  };
+  return {
+    contract: {
+      ...contract,
+      version,
+      status: 'frozen',
+      revision: contract.revision + 1,
+      versions: [release, ...contract.versions],
+    },
+    release,
+  };
 }
 
 export async function freezeVersion(
@@ -163,32 +249,24 @@ export async function freezeVersion(
   version: string,
   notes: string,
 ): Promise<ApiContract> {
-  const contracts = await listContracts();
+  const contracts = loadContracts();
   const contract = contracts.find((item) => item.id === contractId);
   if (!contract) {
     throw new Error('契约不存在');
   }
 
-  const release: ContractVersion = {
-    id: `ver-${Date.now()}`,
-    contractId,
+  const { contract: frozen } = buildFrozenContract(
+    contract,
     version,
-    releasedAt: new Date().toISOString(),
-    checksum: stableChecksum(contract.openapi),
     notes,
-    changeIds: contract.changes.map((change) => change.id),
-    openapi: contract.openapi,
-  };
-  const updated: ApiContract = {
-    ...contract,
-    version,
-    status: 'frozen',
-    versions: [release, ...contract.versions],
-  };
-  persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
+    new Date().toISOString(),
+  );
+  storeContracts(contracts.map((item) => (item.id === contractId ? frozen : item)));
   await wait();
-  return clone(updated);
+  return clone(frozen);
 }
+
+export { formatDateTime };
 
 export function generateExampleRequest(contract: ApiContract, change?: ContractChange): string {
   let parsed: unknown;
@@ -283,8 +361,4 @@ export function diffVersionSummary(contract: ApiContract): string {
     `校验值 ${previous.checksum}`,
     `本版变更 ${contract.changes.length} 项`,
   ].join('\n');
-}
-
-function persistContracts(contracts: ApiContract[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(contracts));
 }
