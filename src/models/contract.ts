@@ -54,6 +54,31 @@ export interface ContractVersion {
   notes: string;
   changeIds: string[];
   openapi: string;
+  /** 由哪个发布批次原子生成（单份冻结时为空） */
+  batchId?: string;
+}
+
+/** 一批冻结的生命周期状态：待办 -> 核验中 -> 已冻结；失败后回到待办重试 */
+export type ReleaseBatchStatus = 'todo' | 'verifying' | 'frozen';
+
+export interface ReleaseBatch {
+  id: string;
+  name: string;
+  contractIds: string[];
+  /** 按调用关系算出的冻结次序，存的是契约 id */
+  orderedIds: string[];
+  status: ReleaseBatchStatus;
+  /** 已经逐份核验通过、等待统一落快照的契约 id */
+  verifiedIds: string[];
+  /** 最近一次核验失败停在的契约 id（待办重试从它继续） */
+  failedAtId?: string;
+  failReason?: string;
+  notes: string;
+  createdAt: string;
+  frozenAt?: string;
+  revision: number;
+  /** 建批时每份契约 openapi 的校验值，提交时用于发现其他标签页的改动 */
+  bases: Record<string, string>;
 }
 
 export interface ApiContract {
@@ -70,6 +95,8 @@ export interface ApiContract {
   consumers: ApiConsumer[];
   exemptions: Exemption[];
   versions: ContractVersion[];
+  /** 调用关系：本契约（下游）依赖的上游契约 id 列表，冻结时上游必须先发布 */
+  dependencies: string[];
 }
 
 export interface ReleaseIssue {

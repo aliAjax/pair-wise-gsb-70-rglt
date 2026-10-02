@@ -8,6 +8,7 @@ import {
   PackageCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useCrossTabSync } from '../../services/contract-queries';
 
 const navigation = [
   { to: '/', label: '契约工作台', icon: LayoutDashboard, exact: true },
@@ -18,6 +19,8 @@ const navigation = [
 
 export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // 其他标签页提交批次后，本页自动刷新工作副本
+  useCrossTabSync();
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">

@@ -111,6 +111,7 @@ export function DashboardPage() {
         consumers: [],
         exemptions: [],
         versions: [],
+        dependencies: [],
       };
       await saveContract.mutateAsync(contract);
       setImportText('');
